@@ -24,10 +24,12 @@
 #include <linux/ion.h>
 #include <stdatomic.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/types.h>
+#include <sys/system_properties.h>
 #include <unistd.h>
 
 #include <ion/ion.h>
@@ -103,6 +105,30 @@ int ion_alloc(int fd, size_t len, size_t align, unsigned int heap_mask, unsigned
     };
 
     ret = ion_ioctl(fd, ION_IOC_ALLOC, &data);
+#if !defined(__LP64__)
+    /* Pre-heap-mask ION kernels combine heap selection into flags and use
+     * a 16-byte allocation ioctl. Opt in per device and only for unflagged
+     * allocations; never reinterpret modern cache or protection flags.
+     */
+    if (ret == -ENOTTY && flags == 0) {
+        char value[PROP_VALUE_MAX] = {0};
+        __system_property_get("ro.vendor.ion.legacy_heap_mask", value);
+        unsigned int legacy_mask = strtoul(value, NULL, 0) & heap_mask;
+        if (legacy_mask != 0) {
+            struct {
+                size_t len;
+                size_t align;
+                unsigned int flags;
+                ion_user_handle_t handle;
+            } legacy = {.len = len, .align = align, .flags = legacy_mask};
+            ret = ion_ioctl(fd, _IOWR('I', 0, legacy), &legacy);
+            if (ret == 0) {
+                *handle = legacy.handle;
+            }
+            return ret;
+        }
+    }
+#endif
     if (ret < 0) return ret;
 
     *handle = data.handle;
