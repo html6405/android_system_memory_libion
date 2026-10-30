@@ -228,6 +228,17 @@ int ion_import(int fd, int share_fd, ion_user_handle_t* handle) {
     if (handle == NULL) return -EINVAL;
 
     ret = ion_ioctl(fd, ION_IOC_IMPORT, &data);
+#if !defined(__LP64__)
+    if (ret == -ENOTTY) {
+        char value[PROP_VALUE_MAX] = {0};
+        __system_property_get("ro.vendor.ion.legacy_heap_mask", value);
+        if (strtoul(value, NULL, 0) != 0) {
+            /* This old ABI encodes sizeof(int), but copies ion_fd_data. */
+            ret = ion_ioctl(fd, _IOWR('I', 5, int), &data);
+            if (ret == 0 && data.handle == 0) return -EINVAL;
+        }
+    }
+#endif
     if (ret < 0) return ret;
     *handle = data.handle;
     return ret;
